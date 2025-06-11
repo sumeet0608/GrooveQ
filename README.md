@@ -1,68 +1,55 @@
-# GrooveQ
+# 🎧 GrooveQ
 
-GrooveQ is a collaborative music listening platform where users can create or join spaces to share and enjoy music together. It allows users to add songs via YouTube URLs, maintain a song queue, and vote on songs. The song with the highest votes is played next, ensuring a democratic music experience for all participants.
+**GrooveQ** is a real-time collaborative music platform where users create or join spaces to queue, vote, and stream music together. Add songs via YouTube URLs and let the community decide what plays next — democratically through voting or competitively via Solana-powered bets.
 
-## Features
+---
 
-### 1. User Authentication
-- Users can create an account and log in to access the platform.
-- Authentication is implemented using secure, scalable methods.
+## 🚀 Features
 
-### 2. Create or Join a Space
-- Users can create a new space to start a collaborative music session.
-- Other users can join existing spaces by entering a space code or URL.
+- **User Authentication** – Secure login with NextAuth.js.
+- **Spaces** – Create or join a space with a unique URL or code.
+- **Add Songs** – Paste YouTube links to queue tracks (auto-validated).
+- **Voting System** – Upvote/downvote songs in the queue.
+- **Dynamic Queue** – Highest-voted or highest-bet song plays next.
+- **Real-Time Sync** – Live queue updates using WebSockets.
+- **Responsive UI** – Fully responsive design for all device sizes.
+- **Solana Betting** – Bet SOL (testnet) on your favorite song — winner plays next.
 
-### 3. Add Songs
-- Add songs to the queue by pasting YouTube URLs.
-- The platform automatically validates and queues the song.
+---
 
-### 4. Voting System
-- Each song in the queue can be upvoted or downvoted.
-- Songs with the most votes are prioritized and played next.
-
-### 5. Song Queue Management
-- The queue dynamically updates based on votes.
-- Users can view the current song and the next in line.
-
-### 6. Real-Time Updates
-- Spaces are updated in real-time, ensuring a seamless collaborative experience.
-
-### 7. Responsive Design
-- The platform is fully responsive and works smoothly on devices of all sizes.
-  
-### 8. Solana powered betting system(test net for now)
-- Users can bet on their favourite songs in the queue. Betting starts at 0.01 sol. The song with the highest bet in the queue is played next. 
-
-## Tech Stack
+## 🛠 Tech Stack
 
 ### Frontend
-- **Framework**: Next.js
-- **Styling**: Tailwind CSS
-- **State Management**: React Context API / Redux
+- Next.js (App Router)
+- Tailwind CSS
+- React Context API
 
 ### Backend
-- **Framework**: Next.js API Routes
-- **Database**: PostgreSQL (using Prisma ORM)
-- **Authentication**: NextAuth.js v5
+- Next.js API Routes
+- PostgreSQL + Prisma ORM
+- NextAuth.js v5
 
-### Other Tools
-- **Real-Time Communication**: WebSockets
-- **Hosting**: Vercel (for production deployment)
+### Infrastructure
+- WebSockets (real-time communication)
+- Vercel (deployment & hosting)
 
-## Installation and Setup
+### Blockchain
+- Solana testnet (Phantom wallet integration for song betting)
 
-Follow these steps to set up GrooveQ on your local machine:
+---
+
+## ⚙️ Installation & Setup
 
 ### Prerequisites
 - Node.js (>= 16.x)
-- PostgreSQL database
+- PostgreSQL
 - Git
 
 ### Steps
 
 1. **Clone the Repository**
    ```bash
-   git clone https://github.com/your-username/muspace.git
+   git clone https://github.com/your-username/GrooveQ.git
    cd GrooveQ
    ```
 
@@ -72,7 +59,7 @@ Follow these steps to set up GrooveQ on your local machine:
    ```
 
 3. **Set Up Environment Variables**
-   - Create a `.env.local` file in the root directory.
+   - Create a `.env` file in the root directory.
    - Add the following variables:
      ```env
      DATABASE_URL=your_postgresql_database_url
@@ -81,36 +68,48 @@ Follow these steps to set up GrooveQ on your local machine:
      ```
 
 4. **Migrate the Database**
-   Run the following command to set up the database schema:
    ```bash
    npx prisma migrate dev
    ```
 
-5. **Start the Development Server**
+5. **Generate Prisma Client**
+   ```bash
+   npx prisma generate
+   ```
+
+6. **Start the Development Server**
    ```bash
    npm run dev
    ```
-   The application will be available at `http://localhost:3000`.
+   Visit `http://localhost:3000` to use the app locally.
 
-### Optional: Seed Data
-If you have a seed script set up in your Prisma configuration, you can run:
-```bash
-npx prisma db seed
-```
-
-## Contributing
-Contributions are welcome! If you find any bugs or have feature suggestions, feel free to open an issue or create a pull request.
-
-### Steps to Contribute
-1. Fork the repository.
-2. Create a new branch for your feature or bug fix.
-3. Commit your changes and push them to your fork.
-4. Open a pull request to the main repository.
-
-## License
-This project is licensed under the MIT License. See the LICENSE file for details.
+7. **(Optional) Seed the Database**
+   ```bash
+   npx prisma db seed
+   ```
 
 ---
 
-Enjoy using GrooveQ to create and share music collaboratively!
+## 🤝 Contributing
+
+We welcome contributions! To report bugs, suggest features, or improve documentation:
+
+1. **Fork** the repository
+2. **Create a new branch** (`git checkout -b feature/my-feature`)
+3. **Commit and push** your changes
+4. **Open a Pull Request**
+
+Before contributing, please check the [Issues](https://github.com/your-username/GrooveQ/issues) tab to avoid duplicates.
+
+---
+
+## 📈 Roadmap
+
+- [ ] Private spaces with invite-only access
+- [ ] Playback history & analytics
+- [ ] Enhanced Solana wallet integration
+- [ ] Mainnet-ready Solana payment support
+- [ ] PWA (Progressive Web App) support
+
+
 
