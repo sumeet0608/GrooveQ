@@ -7,8 +7,14 @@ import { useEffect, useState, useTransition } from 'react';
 import { Loader2 } from 'lucide-react';
 
 
-export default function BidSolana({ songId, spaceId,refresh }: { songId: string, spaceId: string,refresh: () => Promise<void> }) {
+interface BidSolanaProps {
+  songId: string;
+  spaceId: string;
+  refresh: () => Promise<void>;
+  currentHighestBidInSpace: number; // New prop for the highest bid in the entire space
+}
 
+export default function BidSolana({ songId, spaceId, refresh, currentHighestBidInSpace }: BidSolanaProps) {
 
   const { publicKey, wallet, sendTransaction } = useWallet()
   const [isPending, startTransition] = useTransition();
@@ -20,17 +26,18 @@ export default function BidSolana({ songId, spaceId,refresh }: { songId: string,
     throw new Error("Missing environment variables");
   }
   const connection = new Connection(DEVNET_URL);
-  const GOVERNANCE_ADDRESS = new PublicKey(PUBLIC_KEY );
+  const GOVERNANCE_ADDRESS = new PublicKey(PUBLIC_KEY);
 
+  // Derive the bid amount directly from the prop
+  // The minimum bid should be the highest bid in the space + 0.001 SOL
+  // Use a state to hold this value, and update it when the prop changes
+  const [newAmount, setNewAmount] = useState<number>(0.001); // Initialize with default
 
-
-
-  const [newAmount, setNewAmount] = useState<number>()
-
+  // Update newAmount whenever currentHighestBidInSpace prop changes
   useEffect(() => {
-    getHighestBid()
-  }, [])
-
+    const updatedBid = currentHighestBidInSpace === 0 ? 0.001 : currentHighestBidInSpace + 0.001;
+    setNewAmount(updatedBid);
+  }, [currentHighestBidInSpace]); // Dependency array ensures this runs when prop changes
 
 
   async function bidSol() {
@@ -40,8 +47,9 @@ export default function BidSolana({ songId, spaceId,refresh }: { songId: string,
     }
 
     try {
-      if (!newAmount) {
-        return toast.error("Bid not found")
+      // Ensure newAmount is valid before sending transaction
+      if (newAmount <= 0) {
+        return toast.error("Bid amount must be greater than zero.");
       }
 
       const transaction = new Transaction().add(
@@ -63,57 +71,37 @@ export default function BidSolana({ songId, spaceId,refresh }: { songId: string,
 
 
       if (status?.value?.err) {
-        throw new Error;
+        // More specific error for failed Solana transaction
+        throw new Error("Solana transaction failed. Please check your wallet.");
       }
       toast.success('Transaction sent successfully!');
 
-      await submit()
+      await submit(); // Proceed to update the database
     } catch (error) {
       console.error('Transaction failed:', error);
-      toast.error('Transaction failed');
+      toast.error('Transaction failed: ' + (error instanceof Error ? error.message : "An unknown error occurred"));
     }
   }
 
   async function submit() {
-    console.log(songId);
-    console.log(newAmount);
-
-
+    console.log("Submitting bid for song:", songId, "with amount:", newAmount);
 
     const res = await fetch(`/api/solana`, {
       method: "POST",
       headers: { 'content-type': "application/json" },
-      body: JSON.stringify({ songId, newAmount })
+      body: JSON.stringify({ songId, newAmount }) // Send the bid amount that was just sent via Solana
     })
     const data = await res.json()
 
     if (!res.ok) {
-      console.log(data);
-
+      console.error("Failed to update bid on server:", data);
+      toast.error(data.message || "Failed to update bid on server");
+    } else {
+      toast.success("Bid successfully recorded!");
     }
-
-    await getHighestBid()
     
     await refresh();
-
   }
-
-  async function getHighestBid() {
-
-    const res = await fetch(`/api/solana?spaceId=${spaceId}`)
-    console.log(res);
-    
-    const data = await res.json()
-    console.log(typeof(data),data);
-    
-    const bid = Number(data) + 0.001
-    if(data == 0)
-      setNewAmount(0.001)
-    else
-      setNewAmount(bid)
-  }
-
-
 
   return (
     <div className="flex gap-2 relative group cursor-pointer">
@@ -122,13 +110,13 @@ export default function BidSolana({ songId, spaceId,refresh }: { songId: string,
           await bidSol()
         })
       }}> 
-      {isPending ? <Loader2 className='w-4 h-4 animate-spin' /> : `bid: ${newAmount} sol`}
+      {/* Display newAmount formatted to a fixed number of decimal places for cleaner UX */}
+      {isPending ? <Loader2 className='w-4 h-4 animate-spin' /> : `bid: ${newAmount.toFixed(3)} sol`}
       </Button>
 
       <div className="absolute top-full left-1/2 transform -translate-x-1/2 mt-2 opacity-0 group-hover:opacity-100 transition-all duration-200 text-sm text-white bg-gray-800 px-2 py-1 rounded shadow-lg z-50 whitespace-nowrap">
-        bid: {newAmount} SOL
+        Minimum required bid: {newAmount.toFixed(3)} SOL
       </div>
     </div>
   )
-
 }

@@ -121,6 +121,7 @@ export default function StreamV2({
       setLoading(false)
     }
   }, [spaceId]);
+  const highestBidInQueue = queue.reduce((max, song) => Math.max(max, song.bidAmount), 0);
 
   if (data?.spaceRunning === false) {
     return (
@@ -468,7 +469,12 @@ export default function StreamV2({
                           </div>
                         </div>
                       </div>
-                      <BidSolana songId={song.id} spaceId={spaceId} refresh={refresh} />
+                      <BidSolana
+                        songId={song.id}
+                        spaceId={spaceId}
+                        refresh={refresh}
+                        currentHighestBidInSpace={highestBidInQueue} // NEW PROP
+                      />
                     </div>
                   ))}
                 </div>
