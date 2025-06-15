@@ -84,7 +84,11 @@ export async function GET(req: NextRequest) {
     console.log(mostBiddedSong);
 
 
-    return NextResponse.json(mostBiddedSong?.bidAmount);
+    const bidAmountToReturn = mostBiddedSong?.bidAmount !== undefined && mostBiddedSong?.bidAmount !== null 
+                               ? mostBiddedSong.bidAmount 
+                               : 0;
+
+    return NextResponse.json(bidAmountToReturn); 
 
 
 

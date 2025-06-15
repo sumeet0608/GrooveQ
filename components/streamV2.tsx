@@ -70,10 +70,16 @@ export default function StreamV2({
   const videoPlayer = useRef<HTMLDivElement>(null);
 
   const removeCurrentSongFromDB = async () => {
+
+    if (!currentSong) {
+      console.warn("removeCurrentSongFromDB: No current song to remove.");
+      return; // Exit if no current song
+    }
+  
     try {
       await fetch(`/api/streams/remove`, {
         method: "DELETE",
-        body: JSON.stringify({ spaceId: spaceId, songId: data?.activeStream?.song.id })
+        body: JSON.stringify({ spaceId: spaceId, songId: currentSong.id })
       });
       refresh(); // Refresh after removing song
     } catch (error) {
@@ -134,35 +140,58 @@ export default function StreamV2({
   }
 
   const playNext = async () => {
+    console.log("playNext: Function called.");
+    console.log("playNext: Current song before removal check:", currentSong);
+    console.log("playNext: Queue length before removal check:", queue.length);
+  
     if (currentSong) {
+      console.log("playNext: Removing current song from DB:", currentSong.id);
       await removeCurrentSongFromDB();
+      console.log("playNext: Current song removed from DB (or attempted).");
     }
-
+  
     if (queue.length > 0) {
+      console.log("playNext: Queue has songs. Attempting to fetch next.");
       try {
         setNextSong(true);
+        console.log("playNext: setNextSong(true).");
+  
         const data = await fetch(`/api/streams/next?spaceId=${spaceId}`, {
           method: "GET",
         });
         const json = await data.json();
-
+  
+        console.log("playNext: API response for next song:", json);
+  
         if (json.stream) {
+          console.log("playNext: New stream received from API:", json.stream.title);
           setCurrentSong(json.stream);
-          setQueue((q) => q.filter((x) => x.id !== json.stream.id));
+          // Log the queue state after filtering, but it's often more informative
+          // to see the result of the `refresh` call that happens shortly after.
+          // For immediate debugging, you could log it here too.
+          setQueue((q) => {
+            const newQueue = q.filter((x) => x.id !== json.stream.id);
+            console.log("playNext: Queue after filtering:", newQueue.map(s => s.title));
+            return newQueue;
+          });
         } else {
+          console.log("playNext: No new stream received from API. Clearing current song and queue.");
           setCurrentSong(null);
           setQueue([]);
         }
       } catch (e) {
-        console.error("Error playing next song:", e);
+        console.error("playNext: ERROR playing next song:", e);
         setCurrentSong(null);
         setQueue([]);
       } finally {
         setNextSong(false);
+        console.log("playNext: setNextSong(false). Finally block executed.");
       }
     } else {
+      console.log("playNext: Queue is empty. Clearing current song.");
       setCurrentSong(null);
     }
+    console.log("playNext: Function finished.");
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -247,7 +276,7 @@ export default function StreamV2({
         host: 'https://www.youtube-nocookie.com',
         playerVars: {
           autoplay: 1,
-          controls: 0,
+          controls: 1,
           disablekb: 0,
           enablejsapi: 0,
           fs: 0,
@@ -294,10 +323,10 @@ export default function StreamV2({
           {/* Left: Music Player */}
           <BackgroundGradient className="rounded p-2">
           <Card className="bg-black shadow-lg h-[calc(100vh-20rem)]">
-            <CardContent className="p-6 space-y-4 h-full flex flex-col pointer-events-none">
+            <CardContent className="p-6 space-y-4 h-full flex flex-col">
               <h2 className="text-2xl font-bold text-white">Now Playing</h2>
               {currentSong ? (
-                <div className="flex-1 flex flex-col pointer-events-none">
+                <div className="flex-1 flex flex-col">
                   {playVideo ? (
                     <div
                       ref={videoPlayer}

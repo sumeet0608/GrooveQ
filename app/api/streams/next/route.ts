@@ -31,32 +31,38 @@ export async function GET(req: NextRequest) {
     if (!spaceId)
       return NextResponse.json({ success: false, message: "no song found in the queue" }, { status: 404 })
 
-
-    const mostBiddedSong = await prisma.song.findFirst({
+    const nextSongToPlay = await prisma.song.findFirst({
       where: {
         spaceId: spaceId,
         played: false,
-        userId: user?.id
       },
-      orderBy: {
-        bidAmount: 'desc'
+      orderBy: [
+        {
+          bidAmount: 'desc', 
+        },
+        {
+          votes: {
+            _count: 'desc', 
+          },
+        },
+        {
+          createdAt: 'asc', 
+        },
+      ],
+      include: {
+        votes: true, 
       }
-    })
-    console.log(mostBiddedSong);
+    });
+
+
+    if (!nextSongToPlay) {
+      return NextResponse.json(
+        { success: false, message: "No unplayed songs with bids found in the queue for this space." },
+        { status: 404 }
+      );
+    }
     
-    const mostVotedSong = await prisma.song.findFirst({
-      where: {
-        spaceId: spaceId,
-        played: false,
-        userId: user?.id
-      },
-      orderBy: {
-        votes: {
-          _count: 'desc'
-        }
-      }
-    })
-
+  
 
     await Promise.all([
       prisma.currentSong.upsert({
@@ -64,20 +70,20 @@ export async function GET(req: NextRequest) {
           spaceId: spaceId as string
         },
         update: {
-          userId: user.id,
-          songId: mostVotedSong?.id,
+          userId: user.id, 
+          songId: nextSongToPlay.id,
           spaceId: spaceId
         },
         create: {
-          userId: session.user.id,
-          songId: mostVotedSong?.id,
+          userId: session.user.id, 
+          songId: nextSongToPlay.id,
           spaceId: spaceId
         },
       })
       ,
       prisma.song.update({
         where: {
-          id: mostVotedSong?.id ?? "",
+          id: nextSongToPlay.id, 
         },
         data: {
           played: true,
@@ -87,10 +93,10 @@ export async function GET(req: NextRequest) {
     ]);
 
     return NextResponse.json({
-      stream: mostVotedSong,
+      stream: nextSongToPlay, 
     });
   } catch (error: any) {
+    console.error("Error in GET /api/get-current-song:", error); // Log the error for debugging
     return NextResponse.json({ message: "Something went wrong", error: error.message }, { status: 501 })
   }
-
 }
