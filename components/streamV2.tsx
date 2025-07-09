@@ -16,21 +16,23 @@ import Link from 'next/link';
 import Chat from './chat';
 import BidSolana from './BidSolana';
 import { ScrollArea, ScrollBar } from './ui/scroll-area';
-import { BackgroundBeams } from './ui/background-beams';
 import { BackgroundGradient } from './ui/background-gradient';
 import { Spotlight } from './ui/spotlight-new';
+import { io, Socket } from 'socket.io-client';
+import { HashLoader } from "react-spinners";
 
+// --- Interfaces (Updated SpaceData.activeStream.song to be a full Video) ---
 interface SpaceData {
   activeStream: {
-    song: {
-      id: string
-    }
-  }
+    song: Video; // Changed this to be a full Video object
+  } | null; // activeStream can be null if no song is playing
   spaceName?: string;
   spaceDesc?: string;
-  isCreator?: boolean;
-  spaceId: string
-  spaceRunning: boolean
+  isCreator?: boolean; // This will determine if the current user is the host (passed from page.tsx)
+  spaceId: string;
+  spaceRunning: boolean;
+  hostId: string;
+  streams?: Video[]; // The queue of songs
 }
 
 interface Video {
@@ -50,49 +52,160 @@ interface Video {
   artist: string;
 }
 
-const REFRESH_INTERVAL_MS = 5 * 1000;
-
 export default function StreamV2({
-  hostId,
-  playVideo = false,
-  spaceId
+  spaceId,
+  currentUserId,
+  initialIsCreator,
+  initialSpaceData
 }: {
-  hostId: string;
-  playVideo: boolean;
   spaceId: string;
+  currentUserId: string;
+  initialIsCreator: boolean;
+  initialSpaceData: SpaceData | null;
 }) {
   const [url, setUrl] = useState("");
-  const [queue, setQueue] = useState<Video[]>([]);
-  const [data, setData] = useState<SpaceData>()
-  const [currentSong, setCurrentSong] = useState<Video | null>(null);
-  const [nextSong, setNextSong] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const videoPlayer = useRef<HTMLDivElement>(null);
+  const [queue, setQueue] = useState<Video[]>(initialSpaceData?.streams || []);
+  const [spaceData, setSpaceData] = useState<SpaceData | null>(initialSpaceData);
+  const [currentSong, setCurrentSong] = useState<Video | null>(initialSpaceData?.activeStream?.song || null);
+  const [nextSongTriggered, setNextSongTriggered] = useState(false);
+  const [loading, setLoading] = useState(!initialSpaceData);
+  const videoPlayerRef = useRef<HTMLDivElement>(null);
+  const playerInstance = useRef<any>(null);
 
-  const removeCurrentSongFromDB = async () => {
+  const isHost = initialIsCreator;
 
-    if (!currentSong) {
-      console.warn("removeCurrentSongFromDB: No current song to remove.");
-      return; // Exit if no current song
+  const removeCurrentSongFromDB = useCallback(async () => {
+    if (!currentSong || !isHost) {
+      console.warn("removeCurrentSongFromDB: No current song or not host. Skipping removal.");
+      return;
     }
-  
     try {
       await fetch(`/api/streams/remove`, {
         method: "DELETE",
         body: JSON.stringify({ spaceId: spaceId, songId: currentSong.id })
       });
-      refresh(); // Refresh after removing song
     } catch (error) {
       console.error("Error removing current song:", error);
     }
+  }, [currentSong, spaceId, isHost]);
+
+  const playNext = useCallback(async () => {
+    if (!isHost) return;
+    console.log("playNext: Host triggered.");
+
+    if (currentSong) {
+      console.log("playNext: Host removing current song from DB.");
+      await removeCurrentSongFromDB();
+    }
+
+    if (queue.length > 0) {
+      console.log("playNext: Host fetching next song from API.");
+      setNextSongTriggered(true);
+      try {
+        const res = await fetch(`/api/streams/next?spaceId=${spaceId}`, {
+          method: "GET",
+        });
+        const json = await res.json();
+        console.log("playNext: Host received next song response:", json);
+      } catch (e) {
+        console.error("playNext: Host ERROR playing next song:", e);
+        toast.error("Failed to play next song.");
+      } finally {
+        setNextSongTriggered(false);
+      }
+    } else {
+      console.log("playNext: Host: Queue is empty. Clearing current song.");
+    }
+  }, [isHost, currentSong, queue, removeCurrentSongFromDB, spaceId]);
+
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!url.trim()) {
+      toast.error("Song URL cannot be empty");
+      return;
+    }
+    if (!url.match(YT_REGEX)) {
+      toast.error("Invalid YouTube URL format");
+      return;
+    }
+    setLoading(true);
+    try {
+      const postData = streamSchema.parse({ url, hostId: currentUserId, spaceId });
+      const response = await fetch(`/api/streams`, {
+        method: 'POST',
+        headers: { 'content-type': "application/json" },
+        body: JSON.stringify(postData)
+      });
+      const data = await response.json();
+
+      if (!response.ok)
+        throw new Error(data.message || "An error occurred");
+
+      setUrl("");
+      toast.success("Song added to queue successfully");
+    } catch (error) {
+      if (error instanceof Error) {
+        toast.error(error.message);
+      } else {
+        toast.error("An unexpected error occurred");
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const refresh = useCallback(async () => {
-    try {
-      const res = await fetch(`/api/streams/?spaceId=${spaceId}`)
-      const data = await res.json()
-      setData(data)
+  const handleUpvote = async (songId: string, isUpvote: boolean) => {
+    toast.success("Voted successfully");
+    await fetch(`/api/streams/upvote`, {
+      method: isUpvote ? "POST" : "DELETE",
+      body: JSON.stringify({ songId })
+    });
+  };
 
+  useEffect(() => {
+    if (!initialSpaceData) {
+        setLoading(true);
+        const fetchInitialClientData = async () => {
+            try {
+                const res = await fetch(`/api/streams/?spaceId=${spaceId}`);
+                const data = await res.json();
+                setSpaceData(data);
+                if (data.streams && Array.isArray(data.streams)) {
+                    const sortedStreams = data.streams.sort((a: any, b: any) => {
+                        if (a.bidAmount !== b.bidAmount) {
+                            return (b.bidAmount || 0) - (a.bidAmount || 0);
+                        }
+                        return b.upvotes - a.upvotes;
+                    });
+                    setQueue(sortedStreams);
+                } else {
+                    setQueue([]);
+                }
+                if (data?.activeStream?.song) {
+                    setCurrentSong(data.activeStream.song);
+                } else {
+                    setCurrentSong(null);
+                }
+            } catch (error) {
+                console.error("Error fetching initial client-side space data:", error);
+                toast.error("Failed to load space data.");
+            } finally {
+                setLoading(false);
+            }
+        };
+        fetchInitialClientData();
+    } else {
+        setLoading(false);
+    }
+
+
+    const socket = io(process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001');
+    socket.emit('joinSpace', spaceId);
+
+    socket.on('spaceUpdate', (data: SpaceData) => {
+      console.log("Received spaceUpdate from Socket.io:", data);
+      setSpaceData(data);
       if (data.streams && Array.isArray(data.streams)) {
         const sortedStreams = data.streams.sort((a: any, b: any) => {
           if (a.bidAmount !== b.bidAmount) {
@@ -100,32 +213,120 @@ export default function StreamV2({
           }
           return b.upvotes - a.upvotes;
         });
-
         setQueue(sortedStreams);
       } else {
         setQueue([]);
       }
+      if (data?.activeStream?.song) {
+        setCurrentSong(data.activeStream.song);
+      } else {
+        setCurrentSong(null);
+      }
+    });
 
-      setCurrentSong((prevSong) => {
-        if (data?.activeStream?.song) {
-          if (!prevSong || prevSong.id !== data.activeStream.song.id) {
-            return data.activeStream.song;
-          }
-        }
-        return prevSong;
-      });
-    } catch (error: any) {
-      setQueue([]);
-      setCurrentSong(null);
-    } finally {
-      setLoading(false)
+    socket.on('connect_error', (err) => {
+      console.error('Socket.io connection error:', err.message);
+      toast.error('Real-time connection failed. Please refresh.');
+    });
+
+    return () => {
+      socket.emit('leaveSpace', spaceId);
+      socket.disconnect();
+    };
+  }, [spaceId, initialSpaceData]);
+
+  useEffect(() => {
+    if (isHost && !currentSong && queue.length > 0 && !nextSongTriggered) {
+      playNext();
     }
-  }, [spaceId]);
+  }, [isHost, currentSong, queue, nextSongTriggered, playNext]);
+
+  useEffect(() => {
+    if (!isHost || !videoPlayerRef.current) {
+      if (playerInstance.current) {
+        playerInstance.current.destroy();
+        playerInstance.current = null;
+      }
+      return;
+    }
+
+    if (currentSong) {
+      if (!playerInstance.current) {
+        playerInstance.current = YouTubePlayer(videoPlayerRef.current, {
+          videoId: currentSong.extractedId,
+          host: 'https://www.youtube-nocookie.com',
+          playerVars: {
+            autoplay: 1,
+            controls: 1,
+            disablekb: 0,
+            enablejsapi: 1,
+            fs: 0,
+            rel: 0,
+            origin: window.location.origin,
+            widget_referrer: window.location.origin,
+          }
+        });
+        playerInstance.current.playVideo();
+
+        const eventHandler = (event: { data: number }) => {
+          if (event.data === 0) {
+            console.log("YouTube player ended. Triggering playNext.");
+            playNext();
+          }
+        };
+        playerInstance.current.on("stateChange", eventHandler);
+
+      } else {
+        playerInstance.current.loadVideoById(currentSong.extractedId);
+        playerInstance.current.playVideo();
+      }
+    } else {
+      if (playerInstance.current) {
+        playerInstance.current.destroy();
+        playerInstance.current = null;
+      }
+    }
+
+    return () => {
+      if (playerInstance.current) {
+        playerInstance.current.destroy();
+        playerInstance.current = null;
+      }
+    };
+  }, [currentSong, isHost, playNext]);
+
+
+  useEffect(() => {
+    if (!isHost) return;
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [isHost]);
+
   const highestBidInQueue = queue.reduce((max, song) => Math.max(max, song.bidAmount), 0);
 
-  if (data?.spaceRunning === false) {
+  if (loading) {
     return (
-      <div className='flex flex-col min-h-screen items-center justify-center'>
+      <div className="min-h-screen flex items-center justify-center bg-black">
+        <HashLoader
+          color="white"
+          loading={true}
+          size={70}
+          aria-label="Loading Spinner"
+          data-testid="loader"
+        />
+      </div>
+    );
+  }
+
+  if (spaceData?.spaceRunning === false) {
+    return (
+      <div className='flex flex-col min-h-screen items-center justify-center bg-black text-gray-100'>
         <h1 className='text-4xl text-transparent bg-clip-text bg-gradient-to-r from-purple-400  to-red-500'>
           Thanks for tuning in, The space has been ended
         </h1>
@@ -140,234 +341,78 @@ export default function StreamV2({
     );
   }
 
-  const playNext = async () => {
-    console.log("playNext: Function called.");
-    console.log("playNext: Current song before removal check:", currentSong);
-    console.log("playNext: Queue length before removal check:", queue.length);
-  
-    if (currentSong) {
-      console.log("playNext: Removing current song from DB:", currentSong.id);
-      await removeCurrentSongFromDB();
-      console.log("playNext: Current song removed from DB (or attempted).");
-    }
-  
-    if (queue.length > 0) {
-      console.log("playNext: Queue has songs. Attempting to fetch next.");
-      try {
-        setNextSong(true);
-        console.log("playNext: setNextSong(true).");
-  
-        const data = await fetch(`/api/streams/next?spaceId=${spaceId}`, {
-          method: "GET",
-        });
-        const json = await data.json();
-  
-        console.log("playNext: API response for next song:", json);
-  
-        if (json.stream) {
-          console.log("playNext: New stream received from API:", json.stream.title);
-          setCurrentSong(json.stream);
-          // Log the queue state after filtering, but it's often more informative
-          // to see the result of the `refresh` call that happens shortly after.
-          // For immediate debugging, you could log it here too.
-          setQueue((q) => {
-            const newQueue = q.filter((x) => x.id !== json.stream.id);
-            console.log("playNext: Queue after filtering:", newQueue.map(s => s.title));
-            return newQueue;
-          });
-        } else {
-          console.log("playNext: No new stream received from API. Clearing current song and queue.");
-          setCurrentSong(null);
-          setQueue([]);
-        }
-      } catch (e) {
-        console.error("playNext: ERROR playing next song:", e);
-        setCurrentSong(null);
-        setQueue([]);
-      } finally {
-        setNextSong(false);
-        console.log("playNext: setNextSong(false). Finally block executed.");
-      }
-    } else {
-      console.log("playNext: Queue is empty. Clearing current song.");
-      setCurrentSong(null);
-    }
-    console.log("playNext: Function finished.");
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!url.trim()) {
-      toast.error("Song url cannot cannot be empty")
-      return;
-    }
-    if (!url.match(YT_REGEX)) {
-      toast.error("Invalid YouTube URL format");
-      return;
-    }
-    setLoading(true);
-    try {
-      const postData = streamSchema.parse({ url, hostId, spaceId });
-      const response = await fetch(`/api/streams`, {
-        method: 'POST',
-        headers: { 'content-type': "application/json" },
-        body: JSON.stringify(postData)
-      })
-      const data = await response.json();
-
-      if (!response.ok)
-        throw new Error(data.message || "An error occurred")
-
-      setQueue([...queue, data])
-      setUrl("")
-      toast.success("song added to queue successfully")
-      refresh(); // Refresh after adding song
-    } catch (error) {
-      if (error instanceof Error) {
-        toast.error(error.message);
-      } else {
-        toast.error("An unexpected error occurred");
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleUpvote = async (songId: string, isUpvote: boolean) => {
-    toast.success("Voted successfully")
-    await fetch(`/api/streams/upvote`, {
-      method: isUpvote ? "POST" : "DELETE",
-      body: JSON.stringify({ songId })
-    })
-    refresh(); // Refresh after upvote
-  };
-
-  useEffect(() => {
-    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-      e.returnValue = ''; // Required for Chrome to show the confirmation dialog
-    };
-
-    window.addEventListener('beforeunload', handleBeforeUnload);
-
-    return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!currentSong && queue.length > 0 && !nextSong) {
-      playNext();
-    }
-  }, [currentSong, queue, nextSong]);
-
-  useEffect(() => {
-    refresh();
-    const interval = setInterval(refresh, REFRESH_INTERVAL_MS);
-    return () => clearInterval(interval);
-  }, [refresh]);
-
-  useEffect(() => {
-    if (!currentSong || !videoPlayer.current)
-      return;
-
-    const player = YouTubePlayer(videoPlayer.current,
-      {
-        videoId: currentSong.extractedId,
-        host: 'https://www.youtube-nocookie.com',
-        playerVars: {
-          autoplay: 1,
-          controls: 1,
-          disablekb: 0,
-          enablejsapi: 0,
-          fs: 0,
-          rel: 0,
-          origin: window.location.origin,
-          widget_referrer: window.location.origin,
-        }
-      }
-    );
-    player.playVideo();
-
-    const eventHandler = (event: { data: number }) => {
-      if (event.data === 0) {
-        playNext();
-      }
-    };
-    player.on("stateChange", eventHandler);
-
-    return () => {
-      player.destroy();
-    };
-  }, [currentSong, videoPlayer]);
-
   return (
-    <div className="min-h-screen flex flex-col">
-      <Spotlight/>
+    <div className="min-h-screen flex flex-col bg-black text-gray-100">
+      <Spotlight />
       <div className="max-w-7xl mx-auto w-full px-4 py-6">
         {/* Header */}
         <div className="mb-8 rounded-lg p-4">
           <SpaceHeader
             data={{
-              spaceName: data?.spaceName,
-              spaceDesc: data?.spaceDesc,
-              isCreator: data?.isCreator ?? false,
+              spaceName: spaceData?.spaceName,
+              spaceDesc: spaceData?.spaceDesc,
+              isCreator: isHost,
               spaceId: spaceId,
             }}
           />
         </div>
 
-        {/* Main Content - Video Player and Chat Side by Side */}
-
-       
+        {/* Main Content - Video Player/Thumbnail and Chat Side by Side */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Left: Music Player */}
+          {/* Left: Music Player (Host) / Current Song Info (Guest) */}
           <BackgroundGradient className="rounded p-2">
-          <Card className="bg-black shadow-lg h-[calc(100vh-20rem)]">
-            <CardContent className="p-6 space-y-4 h-full flex flex-col">
-              <h2 className="text-2xl font-bold text-white">Now Playing</h2>
-              {currentSong ? (
-                <div className="flex-1 flex flex-col">
-                  {playVideo ? (
-                    <div
-                      ref={videoPlayer}
-                      className="w-full flex-1"
-                    />
-                  ) : (
-                    <div className="flex-1 flex flex-col">
-                      <div className="flex-1 relative">
-                        <Image
-                          src={currentSong.bigImg}
-                          className="w-full h-full object-cover rounded-md"
-                          alt={currentSong.title}
-                          fill
-                        />
+            <Card className="bg-black shadow-lg h-[calc(100vh-20rem)]">
+              <CardContent className="p-6 space-y-4 h-full flex flex-col">
+                <h2 className="text-2xl font-bold text-white">Now Playing</h2>
+                {currentSong ? (
+                  <div className="flex-1 flex flex-col">
+                    {isHost ? (
+                      <div ref={videoPlayerRef} className="w-full flex-1" />
+                    ) : (
+                      <div className="flex-1 flex flex-col items-center justify-center">
+                        <div className="relative w-full max-w-sm h-40 md:h-64 rounded-md overflow-hidden mb-4">
+                          <Image
+                            src={currentSong.bigImg}
+                            className="w-full h-full object-cover rounded-md"
+                            alt={currentSong.title}
+                            fill
+                            sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+                          />
+                        </div>
+                        <p className="mt-2 text-center text-xl font-semibold text-white">
+                          {currentSong.title}
+                        </p>
+                        <p className="text-center text-gray-400">
+                          {currentSong.artist}
+                        </p>
+                        <p className="text-sm text-gray-500 mt-2">
+                          Playing on host&apos;s device
+                        </p>
                       </div>
-                      <p className="mt-2 text-center font-semibold text-white">
-                        {currentSong.title}
-                      </p>
-                      <p className="mt-2 text-center font-semibold text-white">
-                        {currentSong.artist}
-                      </p>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <p className="text-center text-gray-400">
-                  No song playing, Add a song in the queue
-                </p>
-              )}
-            </CardContent>
-          </Card>
-        </BackgroundGradient>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-center text-gray-400">
+                    No song playing, Add a song in the queue
+                  </p>
+                )}
+                {isHost && currentSong && (
+                  <Button
+                    onClick={playNext}
+                    disabled={nextSongTriggered}
+                    className="mt-4 bg-blue-600 text-white hover:bg-blue-700 self-center"
+                  >
+                    {nextSongTriggered ? "Loading Next..." : "Play Next Song"}
+                  </Button>
+                )}
+              </CardContent>
+            </Card>
+          </BackgroundGradient>
 
           {/* Right: Chat */}
-
-
           <div className="h-[calc(103vh-20rem)]">
-              <Chat spaceId={spaceId} isCreator={data?.isCreator as boolean} />
+            <Chat spaceId={spaceId} isCreator={isHost} />
           </div>
-
         </div>
 
         {/* Queue Section */}
@@ -383,10 +428,10 @@ export default function StreamV2({
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
                 />
-                
-                <Button 
-                  disabled={loading} 
-                  type="submit" 
+
+                <Button
+                  disabled={loading}
+                  type="submit"
                   className="bg-purple-600 text-white hover:bg-purple-700 whitespace-nowrap"
                 >
                   {loading ? "adding..." : "Add to Queue"}
@@ -472,8 +517,8 @@ export default function StreamV2({
                       <BidSolana
                         songId={song.id}
                         spaceId={spaceId}
-                        refresh={refresh}
-                        currentHighestBidInSpace={highestBidInQueue} // NEW PROP
+                        refresh={ async () => { /* No longer needed for refresh, Socket.io handles */ }}
+                        currentHighestBidInSpace={highestBidInQueue}
                       />
                     </div>
                   ))}
@@ -484,7 +529,6 @@ export default function StreamV2({
           </div>
         </div>
       </div>
-      {/* <BackgroundBeams /> */}
     </div>
   )
-} 
+}
